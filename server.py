@@ -54,130 +54,47 @@ class MinecraftServer:
             return False
 
     def _start_server(self) -> bool:
-        """Internal server start logic"""
+        """Simplified server start without any file modifications"""
+        if self.is_running():
+            console.print("[yellow]⚠️  Server is already running[/yellow]")
+            return False
+
+        if not self.process_manager.acquire_lock():
+            console.print("[red]❌ Another server instance is running[/red]")
+            return False
+
         jar_path = self.server_dir / self.config.get("jar_name")
         if not jar_path.exists():
             console.print(f"[red]❌ JAR file not found: {jar_path}[/red]")
             return False
 
-        # Ensure server directory exists
-        self.server_dir.mkdir(parents=True, exist_ok=True)
-
-        # Accept EULA
-        # self._setup_eula()
-
-        # Setup server properties if needed
-        # self._setup_server_properties()
-
-        # Build Java command
-        java_cmd = self._build_java_command()
-
-        with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                console=console
-        ) as progress:
-            task = progress.add_task("Starting server...", total=None)
-
-            try:
-                # Start server process
-                self.process = subprocess.Popen(
-                    java_cmd,
-                    cwd=self.server_dir,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    stdin=subprocess.PIPE,
-                    text=True,
-                    bufsize=1,
-                    universal_newlines=True
-                )
-
-                # Save PID
-                self.process_manager.save_pid(self.process.pid)
-
-                # Wait for server to start
-                # if self._wait_for_startup():
-                #     psutil_process = psutil.Process(self.process.pid)
-                #     self.stats.set_process(psutil_process)
-                #     console.print("[green]✅ Server started successfully![/green]")
-                #     console.print(f"[dim]PID: {self.process.pid} | Port: {self.config.get('server_port')}[/dim]")
-                #     return True
-                # else:
-                #     self._cleanup_failed_start()
-                #     return False
-
-                console.print("[green]✅ Server process launched![/green]")
-                console.print(f"[dim]PID: {self.process.pid}[/dim]")
-                return True
-
-            except Exception as e:
-                self._cleanup_failed_start()
-                raise e
-
-    def _setup_eula(self):
-        """Setup EULA acceptance"""
-        eula_path = self.server_dir / "eula.txt"
-        if not eula_path.exists():
-            eula_path.write_text("eula=true\n")
-            console.print("[cyan]📝 EULA accepted[/cyan]")
-
-    def _setup_server_properties(self):
-        """Setup server.properties with config values"""
-        properties_path = self.server_dir / "server.properties"
-
-        # Basic properties to set
-        properties = {
-            "server-port": self.config.get("server_port"),
-            "enable-query": str(self.config.get("enable_query")).lower(),
-            "query.port": self.config.get("query_port"),
-            "enable-rcon": str(self.config.get("enable_rcon")).lower(),
-        }
-
-        if self.config.get("enable_rcon"):
-            properties["rcon.port"] = self.config.get("rcon_port")
-            properties["rcon.password"] = self.config.get("rcon_password")
-
-        # Update properties file
-        if properties_path.exists():
-            self._update_properties_file(properties_path, properties)
-        else:
-            self._create_properties_file(properties_path, properties)
-
-    def _update_properties_file(self, properties_path: Path, new_properties: dict):
-        """Update existing server.properties file"""
         try:
-            lines = properties_path.read_text().splitlines()
-            updated_lines = []
-            updated_keys = set()
+            # Build basic Java command
+            java_cmd = [
+                "java",
+                f"-Xms{self.config.get('memory_min')}",
+                f"-Xmx{self.config.get('memory_max')}",
+                "-jar", self.config.get("jar_name"), "nogui"
+            ]
 
-            for line in lines:
-                if '=' in line and not line.strip().startswith('#'):
-                    key = line.split('=')[0].strip()
-                    if key in new_properties:
-                        updated_lines.append(f"{key}={new_properties[key]}")
-                        updated_keys.add(key)
-                    else:
-                        updated_lines.append(line)
-                else:
-                    updated_lines.append(line)
+            # Start process
+            self.process = subprocess.Popen(
+                java_cmd,
+                cwd=self.server_dir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.PIPE,
+                text=True
+            )
 
-            # Add any new properties
-            for key, value in new_properties.items():
-                if key not in updated_keys:
-                    updated_lines.append(f"{key}={value}")
-
-            properties_path.write_text('\n'.join(updated_lines) + '\n')
+            self.process_manager.save_pid(self.process.pid)
+            console.print("[green]✅ Server process launched![/green]")
+            return True
 
         except Exception as e:
-            console.print(f"[yellow]⚠️  Could not update server.properties: {e}[/yellow]")
-
-    def _create_properties_file(self, properties_path: Path, properties: dict):
-        """Create a basic server.properties file"""
-        content = "# Minecraft server properties\n"
-        for key, value in properties.items():
-            content += f"{key}={value}\n"
-
-        properties_path.write_text(content)
+            self.process_manager.release_lock()
+            console.print(f"[red]❌ Failed to start server: {e}[/red]")
+            return False
 
     def _build_java_command(self) -> List[str]:
         """Build the Java command for starting the server"""
