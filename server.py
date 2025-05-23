@@ -19,6 +19,7 @@ from stats import ServerStats
 
 console = Console()
 
+
 class MinecraftServer:
     """Simple Minecraft server process management"""
 
@@ -229,12 +230,40 @@ class MinecraftServer:
         return self.start()
 
     def is_running(self) -> bool:
-        """Check if server is running (process-based, no port checking)"""
+        """Check if server is running (multiple detection methods)"""
+        # Method 1: Check saved PID
         pid = self.process_manager.get_pid()
-        if not pid:
-            return False
+        if pid and self.process_manager.is_process_running(pid):
+            return True
 
-        return self.process_manager.is_process_running(pid)
+        # Method 2: Check if we have a direct process reference
+        if self.process and self.process.poll() is None:
+            # Update the saved PID if it's different
+            actual_pid = self.process.pid
+            if pid != actual_pid:
+                self.process_manager.save_pid(actual_pid)
+            return True
+
+        # Method 3: Look for Java processes running our JAR
+        jar_name = self.config.get("jar_name")
+        java_processes = self.process_manager.find_java_processes(jar_name)
+
+        if java_processes:
+            # Found a Java process running our JAR, adopt it
+            for java_pid in java_processes:
+                try:
+                    # Verify it's actually our server by checking working directory
+                    java_process = psutil.Process(java_pid)
+                    if str(self.server_dir) in java_process.cwd():
+                        # This is our server, update tracking
+                        self.process_manager.save_pid(java_pid)
+                        self.stats.set_process(java_process)
+                        return True
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+
+        # No server found
+        return False
 
     def send_command(self, command: str, silent: bool = False) -> bool:
         """Send command to server console"""
@@ -258,18 +287,64 @@ class MinecraftServer:
 
     def get_status(self) -> Dict[str, Any]:
         """Get comprehensive server status"""
+        is_running = self.is_running()
+
         base_status = {
-            "running": self.is_running(),
-            "config": self.config.get_summary()
+            "running": is_running,
+            "config": self.config.get_summary(),
+            "debug_info": self._get_debug_info()
         }
 
-        if base_status["running"]:
+        if is_running:
+            # Ensure stats are tracking the current process
+            pid = self.process_manager.get_pid()
+            if pid and not self.stats.process:
+                try:
+                    psutil_process = psutil.Process(pid)
+                    self.stats.set_process(psutil_process)
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+
+            # Get current stats
             current_stats = self.stats.get_current_stats()
             base_status.update(current_stats)
             base_status["averages"] = self.stats.get_average_stats()
             base_status["peaks"] = self.stats.get_peak_stats()
 
         return base_status
+
+    def _get_debug_info(self) -> Dict[str, Any]:
+        """Get debug information for troubleshooting"""
+        debug_info = {}
+
+        # PID file info
+        pid = self.process_manager.get_pid()
+        debug_info["saved_pid"] = pid
+        debug_info["pid_file_exists"] = self.process_manager.pid_file.exists()
+
+        # Process info
+        if pid:
+            debug_info["pid_exists"] = psutil.pid_exists(pid)
+            try:
+                proc = psutil.Process(pid)
+                debug_info["process_running"] = proc.is_running()
+                debug_info["process_name"] = proc.name()
+                debug_info["process_cwd"] = proc.cwd()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                debug_info["process_accessible"] = False
+
+        # Direct process reference
+        if self.process:
+            debug_info["direct_process_poll"] = self.process.poll()
+            debug_info["direct_process_pid"] = getattr(self.process, 'pid', None)
+
+        # Java processes
+        jar_name = self.config.get("jar_name")
+        java_processes = self.process_manager.find_java_processes(jar_name)
+        debug_info["java_processes_found"] = len(java_processes)
+        debug_info["java_process_pids"] = java_processes
+
+        return debug_info
 
     def get_world_info(self) -> Dict[str, Any]:
         """Get world information"""

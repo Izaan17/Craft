@@ -92,24 +92,48 @@ class ProcessManager:
 
         return None
 
-    @staticmethod
-    def find_java_processes(jar_name: str) -> list:
+    def find_java_processes(self, jar_name: str) -> list:
         """Find Java processes running the specified JAR"""
         processes = []
 
         for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
             try:
-                if (proc.info['name'] == 'java' and
-                        proc.info['cmdline'] and
-                        any(jar_name in str(cmd) for cmd in proc.info['cmdline'])):
-                    processes.append(proc.pid)
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                # Check if it's a Java process
+                if proc.info['name'] != 'java':
+                    continue
+
+                cmdline = proc.info['cmdline']
+                if not cmdline:
+                    continue
+
+                # Look for the JAR file in command line
+                cmdline_str = ' '.join(cmdline)
+                if jar_name in cmdline_str and '-jar' in cmdline_str:
+                    processes.append(proc.info['pid'])
+
+            except (psutil.NoSuchProcess, psutil.AccessDenied, TypeError):
                 continue
 
         return processes
 
-    @staticmethod
-    def kill_process(pid: int, timeout: int = 10) -> bool:
+    def get_process_info(self, pid: int) -> dict:
+        """Get detailed information about a process"""
+        try:
+            proc = psutil.Process(pid)
+            return {
+                "pid": pid,
+                "name": proc.name(),
+                "cmdline": proc.cmdline(),
+                "cwd": proc.cwd(),
+                "status": proc.status(),
+                "create_time": proc.create_time(),
+                "memory_info": proc.memory_info(),
+                "cpu_percent": proc.cpu_percent()
+            }
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return {"pid": pid, "error": "Process not accessible"}
+
+    def kill_process(self, pid: int, timeout: int = 10) -> bool:
         """Kill process gracefully with fallback to force kill"""
         try:
             process = psutil.Process(pid)

@@ -14,8 +14,85 @@ from rich.table import Table
 
 console = Console()
 
+
 class StatusDisplay:
     """Enhanced status display with live updates"""
+
+    @staticmethod
+    def show_debug_status(server):
+        """Show detailed debug information"""
+        status = server.get_status()
+        debug_info = status.get("debug_info", {})
+
+        console.print(Panel.fit("🔍 Debug Information", style="bold yellow"))
+
+        # Main status
+        running = status["running"]
+        status_color = "green" if running else "red"
+        status_text = "🟢 Running" if running else "🔴 Stopped"
+        console.print(f"Server Status: [{status_color}]{status_text}[/{status_color}]\n")
+
+        # Debug table
+        debug_table = Table(title="Debug Details", show_header=True)
+        debug_table.add_column("Component", style="cyan", no_wrap=True)
+        debug_table.add_column("Value", style="white")
+        debug_table.add_column("Status", style="white")
+
+        # PID information
+        saved_pid = debug_info.get("saved_pid")
+        debug_table.add_row("Saved PID", str(saved_pid) if saved_pid else "None",
+                            "✅" if saved_pid else "❌")
+
+        debug_table.add_row("PID File Exists", str(debug_info.get("pid_file_exists", False)),
+                            "✅" if debug_info.get("pid_file_exists") else "❌")
+
+        if saved_pid:
+            debug_table.add_row("PID Exists in System", str(debug_info.get("pid_exists", False)),
+                                "✅" if debug_info.get("pid_exists") else "❌")
+
+            debug_table.add_row("Process Running", str(debug_info.get("process_running", False)),
+                                "✅" if debug_info.get("process_running") else "❌")
+
+            debug_table.add_row("Process Name", debug_info.get("process_name", "Unknown"), "")
+            debug_table.add_row("Working Directory", debug_info.get("process_cwd", "Unknown"), "")
+
+        # Direct process reference
+        direct_poll = debug_info.get("direct_process_poll")
+        if direct_poll is not None:
+            debug_table.add_row("Direct Process", f"Poll result: {direct_poll}",
+                                "✅" if direct_poll is None else "❌")
+        else:
+            debug_table.add_row("Direct Process", "No reference", "❌")
+
+        # Java processes
+        java_count = debug_info.get("java_processes_found", 0)
+        java_pids = debug_info.get("java_process_pids", [])
+        debug_table.add_row("Java Processes", f"{java_count} found",
+                            "✅" if java_count > 0 else "❌")
+
+        if java_pids:
+            debug_table.add_row("Java PIDs", ", ".join(map(str, java_pids)), "")
+
+        console.print(debug_table)
+
+        # Suggestions
+        console.print("\n[bold cyan]💡 Troubleshooting Tips:[/bold cyan]")
+
+        if not running:
+            if not saved_pid:
+                console.print("  • No PID found - server may not have been started with Craft")
+                console.print("  • Try: craft start")
+            elif not debug_info.get("pid_exists"):
+                console.print("  • Saved PID doesn't exist - server may have crashed")
+                console.print("  • Try: craft start")
+            elif java_count > 0:
+                console.print("  • Java processes found but not tracked correctly")
+                console.print("  • Server may have been started outside of Craft")
+                console.print("  • Try: craft stop && craft start")
+
+        if running and status.get("uptime"):
+            uptime_str = str(status["uptime"]).split('.')[0]
+            console.print(f"  ✅ Server running normally (uptime: {uptime_str})")
 
     @staticmethod
     def show_status(server, watchdog, live_update: bool = False):
@@ -58,7 +135,8 @@ class StatusDisplay:
 
             # Main server status table
             status_table = StatusDisplay._create_server_status_table(server_status)
-            layout["left"].update(Panel(status_table, title="🖥️  Server Status", border_style="green" if server_status["running"] else "red"))
+            layout["left"].update(Panel(status_table, title="🖥️  Server Status",
+                                        border_style="green" if server_status["running"] else "red"))
 
             # Monitoring status
             monitoring_table = StatusDisplay._create_monitoring_table(watchdog_status)
@@ -422,9 +500,10 @@ class StatusDisplay:
             normalized.append(norm)
 
         # Create chart
-        chart_lines = [f"Max: {max_val:.1f}"]
+        chart_lines = []
 
         # Add scale
+        chart_lines.append(f"Max: {max_val:.1f}")
 
         # Create bars
         for i, norm_val in enumerate(normalized[-20:]):  # Show last 20 points

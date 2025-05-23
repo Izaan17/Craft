@@ -8,6 +8,7 @@ import argparse
 import sys
 from pathlib import Path
 
+import psutil
 from rich.console import Console
 from rich.prompt import Confirm, IntPrompt
 
@@ -55,6 +56,13 @@ Examples:
     # Status
     status_parser = subparsers.add_parser("status", help="Show server status")
     status_parser.add_argument("--live", "-l", action="store_true", help="Live status updates")
+    status_parser.add_argument("--debug", "-d", action="store_true", help="Show debug information")
+
+    # Debug command
+    subparsers.add_parser("debug", help="Show detailed debug information")
+
+    # Fix command
+    subparsers.add_parser("fix", help="Attempt to fix common issues")
 
     # Backup management
     backup_parser = subparsers.add_parser("backup", help="Create backup")
@@ -115,7 +123,16 @@ Examples:
                     watchdog.start()
 
         elif args.command == "status":
-            StatusDisplay.show_status(server, watchdog, live_update=args.live)
+            if hasattr(args, 'debug') and args.debug:
+                StatusDisplay.show_debug_status(server)
+            else:
+                StatusDisplay.show_status(server, watchdog, live_update=args.live)
+
+        elif args.command == "debug":
+            StatusDisplay.show_debug_status(server)
+
+        elif args.command == "fix":
+            _fix_common_issues(server)
 
         elif args.command == "backup":
             backup_manager.create_backup(args.name)
@@ -158,6 +175,63 @@ Examples:
             import traceback
             traceback.print_exc()
         sys.exit(1)
+
+def _fix_common_issues(server):
+    """Attempt to fix common server detection issues"""
+    console.print("[cyan]🔧 Attempting to fix common issues...[/cyan]\n")
+
+    # Get current status
+    status = server.get_status()
+    debug_info = status.get("debug_info", {})
+
+    fixed_issues = []
+
+    # Issue 1: Stale PID file
+    saved_pid = debug_info.get("saved_pid")
+    if saved_pid and not debug_info.get("pid_exists", False):
+        console.print("[yellow]🔧 Removing stale PID file...[/yellow]")
+        server.process_manager.clear_pid()
+        fixed_issues.append("Removed stale PID file")
+
+    # Issue 2: Orphaned server process
+    java_processes = debug_info.get("java_process_pids", [])
+    if java_processes and not status["running"]:
+        console.print("[yellow]🔧 Found orphaned server process, attempting to adopt...[/yellow]")
+        jar_name = server.config.get("jar_name")
+
+        for java_pid in java_processes:
+            try:
+                proc = psutil.Process(java_pid)
+                # Check if it's in the right directory
+                if str(server.server_dir) in proc.cwd():
+                    server.process_manager.save_pid(java_pid)
+                    server.stats.set_process(proc)
+                    console.print(f"[green]✅ Adopted process {java_pid}[/green]")
+                    fixed_issues.append(f"Adopted orphaned process {java_pid}")
+                    break
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+
+    # Issue 3: Clear lock file if no process
+    if not status["running"] and server.process_manager.lock_file.exists():
+        console.print("[yellow]🔧 Clearing stale lock file...[/yellow]")
+        server.process_manager.release_lock()
+        fixed_issues.append("Cleared stale lock file")
+
+    # Report results
+    if fixed_issues:
+        console.print(f"\n[green]✅ Fixed {len(fixed_issues)} issue(s):[/green]")
+        for issue in fixed_issues:
+            console.print(f"  • {issue}")
+
+        console.print(f"\n[cyan]Checking status again...[/cyan]")
+        new_status = server.get_status()
+        if new_status["running"]:
+            console.print("[green]🎉 Server is now detected as running![/green]")
+        else:
+            console.print("[yellow]⚠️  Server still not detected. Try 'craft debug' for more info.[/yellow]")
+    else:
+        console.print("[yellow]⚠️  No fixable issues found. Try 'craft debug' for detailed information.[/yellow]")
 
 def _interactive_backup_selection(backup_manager):
     """Interactive backup selection"""

@@ -1,7 +1,18 @@
-# 🎮 Craft - Modular Minecraft Server Manager
+# 🎮 Craft - NeoForge Server Manager
 
-A completely modular, enterprise-grade Minecraft server management system built for reliability, monitoring, and ease of
-use.
+A completely modular, enterprise-grade **NeoForge** Minecraft server management system built for reliability,
+monitoring, and ease of use.
+
+## 🚀 **Designed for NeoForge**
+
+Craft is specifically designed to work with **NeoForge** servers and follows the principle that NeoForge handles its own
+configuration:
+
+- ✅ **No Port Management** - NeoForge handles server ports automatically
+- ✅ **No EULA Editing** - NeoForge manages EULA acceptance
+- ✅ **No server.properties** - NeoForge configures itself
+- ✅ **Pure Process Management** - Focus on starting, stopping, and monitoring
+- ✅ **NeoForge-Optimized** - Java arguments tuned for modded servers
 
 ## 🏗️ Architecture
 
@@ -21,6 +32,23 @@ craft/
 ├── __init__.py           # Package initialization
 └── requirements.txt      # Python dependencies
 ```
+
+## 🔧 **What NeoForge Handles Automatically**
+
+Craft lets NeoForge manage its own configuration:
+
+- **🌐 Server Ports**: NeoForge opens and manages network ports
+- **📋 EULA**: NeoForge prompts for EULA acceptance on first run
+- **⚙️ server.properties**: NeoForge creates and manages server configuration
+- **🔧 Mod Loading**: NeoForge handles all mod loading and configuration
+- **🌍 World Generation**: NeoForge manages world creation and loading
+
+**Craft focuses purely on**:
+
+- ▶️ **Process Management**: Start/stop the Java server process
+- 📊 **Performance Monitoring**: CPU, RAM, uptime tracking
+- 💾 **Backup Management**: Automated world backups
+- 🐕 **Crash Recovery**: Intelligent auto-restart on failures
 
 ## ✨ Features
 
@@ -64,22 +92,29 @@ craft/
 ### Prerequisites
 
 ```bash
-# Python 3.7+ required
+# Java 17+ required for NeoForge
+java -version
+
+# Python 3.7+ required for Craft
 python3 --version
 
-# Install dependencies
+# Install Python dependencies
 pip install psutil rich
 ```
 
 ### Quick Install
 
 ```bash
-# Clone or download the modular Craft files
-git clone <repository> craft-manager
-cd craft-manager
+# Download Craft files to your server directory
+git clone <repository> neoforge-manager
+cd neoforge-manager
 
 # Make executable
 chmod +x craft.py
+
+# Download NeoForge server JAR
+# Visit: https://neoforged.net/
+# Place JAR as: server/neoforge-server.jar
 
 # Initial setup
 python3 craft.py setup
@@ -101,12 +136,15 @@ pip install -e .
 python3 craft.py setup
 ```
 
-### 2. Place Your Server JAR
+### 2. Place Your NeoForge Server JAR
 
 ```bash
-# Put your server JAR file here:
+# Download NeoForge server from: https://neoforged.net/
+# Put your NeoForge server JAR file here:
 mkdir -p server
-cp minecraft_server.jar server/server.jar
+cp neoforge-server.jar server/neoforge-server.jar
+
+# NeoForge will handle EULA, server.properties, and ports automatically on first run
 ```
 
 ### 3. Start Your Server
@@ -138,6 +176,8 @@ python3 craft.py status --live
 | `stop`     | Stop the server           | `craft.py stop`                  |
 | `restart`  | Restart the server        | `craft.py restart`               |
 | `status`   | Show server status        | `craft.py status --live`         |
+| `debug`    | Show debug information    | `craft.py debug`                 |
+| `fix`      | Fix common issues         | `craft.py fix`                   |
 | `backup`   | Create manual backup      | `craft.py backup --name weekend` |
 | `restore`  | Restore from backup       | `craft.py restore`               |
 | `watchdog` | Manage monitoring         | `craft.py watchdog start`        |
@@ -173,6 +213,19 @@ if server.start():
 # Get status
 status = server.get_status()
 print(f"Server running: {status['running']}")
+```
+
+### Custom Monitoring
+
+```python
+from craft import ServerStats, PerformanceMonitor
+
+stats = ServerStats()
+monitor = PerformanceMonitor(stats)
+
+# Get performance report
+report = monitor.get_performance_summary()
+health_score = report['health_score']
 ```
 
 ## 📊 Monitoring Dashboard
