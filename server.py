@@ -259,7 +259,7 @@ class MinecraftServer:
         """Get comprehensive server status"""
         base_status = {
             "running": self.is_running(),
-            # Removed: "port_open": self._is_port_open(self.config.get("server_port")),
+            "port_open": self._is_port_open(self.config.get("server_port")),
             "config": self.config.get_summary()
         }
 
