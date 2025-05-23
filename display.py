@@ -58,11 +58,24 @@ class StatusDisplay:
 
         # Direct process reference
         direct_poll = debug_info.get("direct_process_poll")
-        if direct_poll is not None:
-            debug_table.add_row("Direct Process", f"Poll result: {direct_poll}",
-                                "✅" if direct_poll is None else "❌")
+        if debug_info.get("direct_process") is not None:
+            if direct_poll is not None:
+                debug_table.add_row("Direct Process", f"Poll result: {direct_poll}",
+                                    "❌ (terminated)" if direct_poll is not None else "✅")
+            else:
+                debug_table.add_row("Direct Process", "Running", "✅")
+
+            # Show stdin capability
+            has_stdin = debug_info.get("has_stdin", False)
+            debug_table.add_row("STDIN Available", str(has_stdin),
+                                "✅" if has_stdin else "❌")
         else:
             debug_table.add_row("Direct Process", "No reference", "❌")
+
+        # Command capability
+        can_commands = debug_info.get("can_send_commands", False)
+        debug_table.add_row("Can Send Commands", str(can_commands),
+                            "✅" if can_commands else "❌")
 
         # Java processes
         java_count = debug_info.get("java_processes_found", 0)
@@ -72,6 +85,13 @@ class StatusDisplay:
 
         if java_pids:
             debug_table.add_row("Java PIDs", ", ".join(map(str, java_pids)), "")
+
+        # Show any errors
+        if "process_error" in debug_info:
+            debug_table.add_row("Process Error", debug_info["process_error"], "❌")
+
+        if "java_search_error" in debug_info:
+            debug_table.add_row("Java Search Error", debug_info["java_search_error"], "❌")
 
         console.print(debug_table)
 
@@ -89,10 +109,22 @@ class StatusDisplay:
                 console.print("  • Java processes found but not tracked correctly")
                 console.print("  • Server may have been started outside of Craft")
                 console.print("  • Try: craft stop && craft start")
+        else:
+            if status.get("uptime"):
+                uptime_str = str(status["uptime"]).split('.')[0]
+                console.print(f"  ✅ Server running normally (uptime: {uptime_str})")
 
-        if running and status.get("uptime"):
-            uptime_str = str(status["uptime"]).split('.')[0]
-            console.print(f"  ✅ Server running normally (uptime: {uptime_str})")
+            # Command capability warnings
+            can_commands = debug_info.get("can_send_commands", False)
+            if not can_commands:
+                console.print("  ⚠️  Cannot send commands to this server process")
+                console.print("  • Server was likely started outside of Craft")
+                console.print("  • Use 'craft restart' to enable command functionality")
+                console.print("  • Or stop the server manually and use 'craft start'")
+            else:
+                console.print("  ✅ Command sending is available")
+                console.print("  • Try: craft command list")
+                console.print("  • Try: craft command say Hello World")
 
     @staticmethod
     def show_status(server, watchdog, live_update: bool = False):
@@ -180,6 +212,14 @@ class StatusDisplay:
             status_text = "[green]🟢 Running[/green]"
             table.add_row("Status", status_text)
             table.add_row("PID", str(status["pid"]))
+
+            # Command capability
+            can_command = status.get("can_send_commands", False)
+            command_text = "[green]✅ Available[/green]" if can_command else "[yellow]⚠️  Limited[/yellow]"
+            table.add_row("Commands", command_text)
+
+            if not can_command:
+                table.add_row("", "[dim]Use 'craft restart' to enable[/dim]")
 
             # Uptime
             uptime_str = str(status["uptime"]).split('.')[0] if status["uptime"] else "Unknown"

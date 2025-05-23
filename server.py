@@ -71,7 +71,7 @@ class MinecraftServer:
             task = progress.add_task("Starting NeoForge server...", total=None)
 
             try:
-                # Start server process
+                # Start server process with proper encoding
                 self.process = subprocess.Popen(
                     java_cmd,
                     cwd=self.server_dir,
@@ -79,6 +79,8 @@ class MinecraftServer:
                     stderr=subprocess.STDOUT,
                     stdin=subprocess.PIPE,
                     text=True,
+                    encoding='utf-8',
+                    errors='replace',  # Handle encoding errors gracefully
                     bufsize=1,
                     universal_newlines=True
                 )
@@ -92,6 +94,7 @@ class MinecraftServer:
                     self.stats.set_process(psutil_process)
                     console.print("[green]✅ NeoForge server started successfully![/green]")
                     console.print(f"[dim]PID: {self.process.pid} | Working Dir: {self.server_dir}[/dim]")
+                    console.print("[cyan]💡 Commands can be sent with: craft command <command>[/cyan]")
                     return True
                 else:
                     self._cleanup_failed_start()
@@ -121,26 +124,54 @@ class MinecraftServer:
 
         return cmd
 
-    def _wait_for_startup(self, timeout: int = 60) -> bool:
-        """Wait for server process to start properly"""
+    def _wait_for_startup(self, timeout: int = 90) -> bool:
+        """Wait for server process to start properly (NeoForge needs more time)"""
         start_time = time.time()
+
+        console.print("[dim]Waiting for NeoForge to initialize (this may take a while)...[/dim]")
 
         while time.time() - start_time < timeout:
             if not self.process:
                 return False
 
             # Check if process terminated
-            if self.process.poll() is not None:
-                console.print("[red]❌ Server process terminated during startup[/red]")
+            poll_result = self.process.poll()
+            if poll_result is not None:
+                console.print(f"[red]❌ Server process terminated during startup (exit code: {poll_result})[/red]")
+                # Try to get some output for debugging
+                try:
+                    if self.process.stdout:
+                        output = self.process.stdout.read()
+                        if output:
+                            console.print(f"[red]Last output: {output[-200:]}[/red]")
+                except:
+                    pass
                 return False
 
-            # Process is running, give it a moment to initialize
-            if time.time() - start_time > 5:  # Wait at least 5 seconds
-                return True
+            # Check if process is responsive (basic check)
+            elapsed = time.time() - start_time
 
-            time.sleep(1)
+            # NeoForge typically takes 30-60 seconds to start
+            if elapsed > 10:  # Wait at least 10 seconds for NeoForge
+                try:
+                    # Check if process is still alive and using reasonable resources
+                    proc = psutil.Process(self.process.pid)
+                    if proc.is_running():
+                        # If it's been running for a while and seems stable, consider it started
+                        if elapsed > 30:
+                            return True
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    return False
+
+            # Show progress dots
+            if int(elapsed) % 10 == 0 and elapsed > 0:
+                console.print(f"[dim]Still starting... ({elapsed:.0f}s elapsed)[/dim]")
+
+            time.sleep(2)
 
         console.print(f"[red]❌ Server startup timeout ({timeout}s)[/red]")
+        console.print(
+            "[yellow]💡 NeoForge servers can take 1-2 minutes to start. Try increasing timeout or check logs.[/yellow]")
         return False
 
     def _cleanup_failed_start(self):
@@ -234,6 +265,13 @@ class MinecraftServer:
         # Method 1: Check saved PID
         pid = self.process_manager.get_pid()
         if pid and self.process_manager.is_process_running(pid):
+            # Ensure stats are tracking this process
+            if not self.stats.process or self.stats.process.pid != pid:
+                try:
+                    psutil_process = psutil.Process(pid)
+                    self.stats.set_process(psutil_process)
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
             return True
 
         # Method 2: Check if we have a direct process reference
@@ -258,12 +296,20 @@ class MinecraftServer:
                         # This is our server, update tracking
                         self.process_manager.save_pid(java_pid)
                         self.stats.set_process(java_process)
+                        console.print(f"[yellow]📡 Adopted running server process (PID: {java_pid})[/yellow]")
+                        # Note: We can't send commands to adopted processes
                         return True
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
 
         # No server found
         return False
+
+    def can_send_commands(self) -> bool:
+        """Check if we can send commands to the server"""
+        return (self.process is not None and
+                self.process.poll() is None and
+                self.process.stdin is not None)
 
     def send_command(self, command: str, silent: bool = False) -> bool:
         """Send command to server console"""
@@ -272,13 +318,22 @@ class MinecraftServer:
                 console.print("[red]❌ Server is not running[/red]")
             return False
 
+        if not self.can_send_commands():
+            if not silent:
+                console.print("[yellow]⚠️  Cannot send commands to adopted server process[/yellow]")
+                console.print("[cyan]💡 Restart the server with Craft to enable command sending:[/cyan]")
+                console.print("   craft restart")
+            return False
+
         try:
-            if self.process and self.process.stdin:
-                self.process.stdin.write(f"{command}\n")
-                self.process.stdin.flush()
-                if not silent:
-                    console.print(f"[green]📤 Command sent: {command}[/green]")
-                return True
+            self.process.stdin.write(f"{command}\n")
+            self.process.stdin.flush()
+            if not silent:
+                console.print(f"[green]📤 Command sent: {command}[/green]")
+            return True
+        except BrokenPipeError:
+            if not silent:
+                console.print("[red]❌ Server stdin pipe is broken - server may have crashed[/red]")
         except Exception as e:
             if not silent:
                 console.print(f"[red]❌ Failed to send command: {e}[/red]")
@@ -291,6 +346,7 @@ class MinecraftServer:
 
         base_status = {
             "running": is_running,
+            "can_send_commands": self.can_send_commands() if is_running else False,
             "config": self.config.get_summary(),
             "debug_info": self._get_debug_info()
         }
@@ -298,7 +354,7 @@ class MinecraftServer:
         if is_running:
             # Ensure stats are tracking the current process
             pid = self.process_manager.get_pid()
-            if pid and not self.stats.process:
+            if pid and (not self.stats.process or self.stats.process.pid != pid):
                 try:
                     psutil_process = psutil.Process(pid)
                     self.stats.set_process(psutil_process)
@@ -330,19 +386,31 @@ class MinecraftServer:
                 debug_info["process_running"] = proc.is_running()
                 debug_info["process_name"] = proc.name()
                 debug_info["process_cwd"] = proc.cwd()
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                debug_info["process_accessible"] = False
+                debug_info["process_status"] = proc.status()
+            except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+                debug_info["process_error"] = str(e)
 
         # Direct process reference
         if self.process:
             debug_info["direct_process_poll"] = self.process.poll()
             debug_info["direct_process_pid"] = getattr(self.process, 'pid', None)
+            debug_info["has_stdin"] = self.process.stdin is not None
+        else:
+            debug_info["direct_process"] = None
 
         # Java processes
         jar_name = self.config.get("jar_name")
-        java_processes = self.process_manager.find_java_processes(jar_name)
-        debug_info["java_processes_found"] = len(java_processes)
-        debug_info["java_process_pids"] = java_processes
+        try:
+            java_processes = self.process_manager.find_java_processes(jar_name)
+            debug_info["java_processes_found"] = len(java_processes)
+            debug_info["java_process_pids"] = java_processes
+        except Exception as e:
+            debug_info["java_search_error"] = str(e)
+            debug_info["java_processes_found"] = 0
+            debug_info["java_process_pids"] = []
+
+        # Command capability
+        debug_info["can_send_commands"] = self.can_send_commands()
 
         return debug_info
 

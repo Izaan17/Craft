@@ -12,14 +12,15 @@ import psutil
 from rich.console import Console
 from rich.prompt import Confirm, IntPrompt
 
-from config import ConfigManager
-from server import MinecraftServer
 from backup import BackupManager
-from watchdog import Watchdog
+from config import ConfigManager
 from display import StatusDisplay
+from server import MinecraftServer
 from utils import setup_signal_handlers
+from watchdog import Watchdog
 
 console = Console()
+
 
 def main():
     """Main application entry point"""
@@ -63,6 +64,10 @@ Examples:
 
     # Fix command
     subparsers.add_parser("fix", help="Attempt to fix common issues")
+
+    # Logs command
+    logs_parser = subparsers.add_parser("logs", help="Show server logs")
+    logs_parser.add_argument("--lines", "-n", type=int, default=20, help="Number of lines to show")
 
     # Backup management
     backup_parser = subparsers.add_parser("backup", help="Create backup")
@@ -134,6 +139,9 @@ Examples:
         elif args.command == "fix":
             _fix_common_issues(server)
 
+        elif args.command == "logs":
+            _show_server_logs(server, args.lines)
+
         elif args.command == "backup":
             backup_manager.create_backup(args.name)
 
@@ -176,6 +184,34 @@ Examples:
             traceback.print_exc()
         sys.exit(1)
 
+
+def _show_server_logs(server, lines: int = 20):
+    """Show recent server logs"""
+    console.print(f"[cyan]📋 Last {lines} lines of server logs:[/cyan]\n")
+
+    log_lines = server.get_log_tail(lines)
+
+    if not log_lines:
+        console.print("[yellow]⚠️  No log files found[/yellow]")
+        console.print("[dim]Logs should appear in server/logs/latest.log after the server starts[/dim]")
+        return
+
+    for line in log_lines:
+        line = line.rstrip()
+        if not line:
+            continue
+
+        # Basic log level coloring
+        if "[ERROR]" in line or "ERROR" in line:
+            console.print(f"[red]{line}[/red]")
+        elif "[WARN]" in line or "WARN" in line:
+            console.print(f"[yellow]{line}[/yellow]")
+        elif "[INFO]" in line or "INFO" in line:
+            console.print(f"[white]{line}[/white]")
+        else:
+            console.print(f"[dim]{line}[/dim]")
+
+
 def _fix_common_issues(server):
     """Attempt to fix common server detection issues"""
     console.print("[cyan]🔧 Attempting to fix common issues...[/cyan]\n")
@@ -190,8 +226,11 @@ def _fix_common_issues(server):
     saved_pid = debug_info.get("saved_pid")
     if saved_pid and not debug_info.get("pid_exists", False):
         console.print("[yellow]🔧 Removing stale PID file...[/yellow]")
-        server.process_manager.clear_pid()
-        fixed_issues.append("Removed stale PID file")
+        try:
+            server.process_manager.clear_pid()
+            fixed_issues.append("Removed stale PID file")
+        except Exception as e:
+            console.print(f"[red]❌ Failed to clear PID file: {e}[/red]")
 
     # Issue 2: Orphaned server process
     java_processes = debug_info.get("java_process_pids", [])
@@ -209,14 +248,24 @@ def _fix_common_issues(server):
                     console.print(f"[green]✅ Adopted process {java_pid}[/green]")
                     fixed_issues.append(f"Adopted orphaned process {java_pid}")
                     break
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
+            except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+                console.print(f"[yellow]⚠️  Could not adopt process {java_pid}: {e}[/yellow]")
                 continue
 
     # Issue 3: Clear lock file if no process
     if not status["running"] and server.process_manager.lock_file.exists():
         console.print("[yellow]🔧 Clearing stale lock file...[/yellow]")
-        server.process_manager.release_lock()
-        fixed_issues.append("Cleared stale lock file")
+        try:
+            server.process_manager.release_lock()
+            fixed_issues.append("Cleared stale lock file")
+        except Exception as e:
+            console.print(f"[red]❌ Failed to clear lock file: {e}[/red]")
+
+    # Issue 4: Reset process reference if it's dead
+    if server.process and server.process.poll() is not None:
+        console.print("[yellow]🔧 Clearing dead process reference...[/yellow]")
+        server.process = None
+        fixed_issues.append("Cleared dead process reference")
 
     # Report results
     if fixed_issues:
@@ -228,10 +277,24 @@ def _fix_common_issues(server):
         new_status = server.get_status()
         if new_status["running"]:
             console.print("[green]🎉 Server is now detected as running![/green]")
+            if new_status.get("can_send_commands", False):
+                console.print("[green]✅ Command sending is available[/green]")
+            else:
+                console.print(
+                    "[yellow]⚠️  Commands not available (server was adopted). Use 'craft restart' to enable.[/yellow]")
         else:
             console.print("[yellow]⚠️  Server still not detected. Try 'craft debug' for more info.[/yellow]")
     else:
         console.print("[yellow]⚠️  No fixable issues found. Try 'craft debug' for detailed information.[/yellow]")
+
+        # Suggest next steps
+        if not status["running"]:
+            console.print("\n[cyan]💡 Next steps:[/cyan]")
+            console.print("  • Check if NeoForge is actually running: ps aux | grep java")
+            console.print("  • Try starting the server: craft start")
+            console.print("  • Check server logs: craft logs")
+            console.print("  • Get detailed debug info: craft debug")
+
 
 def _interactive_backup_selection(backup_manager):
     """Interactive backup selection"""
@@ -250,6 +313,7 @@ def _interactive_backup_selection(backup_manager):
     except (KeyboardInterrupt, EOFError):
         console.print("[yellow]Cancelled[/yellow]")
         return None
+
 
 if __name__ == "__main__":
     main()
