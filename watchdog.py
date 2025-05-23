@@ -180,10 +180,11 @@ class Watchdog:
             return
 
         try:
-            # Check server responsiveness
-            port_responsive = self.server._is_port_open(self.config.get("server_port"))
-            if not port_responsive:
-                console.print("[yellow]⚠️  Server port not responding[/yellow]")
+            # Get process health information
+            health_info = self.server.get_process_health()
+
+            if not health_info.get("healthy", True):
+                console.print(f"[red]🚨 Process health issue: {health_info.get('reason', 'Unknown')}[/red]")
                 return
 
             # Get current stats for health monitoring
@@ -205,6 +206,14 @@ class Watchdog:
             thread_count = stats.get("threads", 0)
             if thread_count > 200:
                 console.print(f"[yellow]⚠️  High thread count: {thread_count}[/yellow]")
+
+            # Memory leak detection (very basic)
+            if hasattr(self, '_last_memory_check'):
+                memory_growth = memory_percent - self._last_memory_check
+                if memory_growth > 10:  # More than 10% growth since last check
+                    console.print(f"[yellow]⚠️  Rapid memory growth detected: +{memory_growth:.1f}%[/yellow]")
+
+            self._last_memory_check = memory_percent
 
         except Exception as e:
             console.print(f"[red]❌ Health check error: {e}[/red]")

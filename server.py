@@ -1,8 +1,3 @@
-"""
-Minecraft server management for Craft Minecraft Server Manager
-Simple process management for NeoForge/Minecraft servers
-"""
-
 import shlex
 import subprocess
 import time
@@ -18,6 +13,45 @@ from process_manager import ProcessManager
 from stats import ServerStats
 
 console = Console()
+
+
+def get_process_health(self) -> Dict[str, Any]:
+    """Get detailed process health information"""
+    pid = self.process_manager.get_pid()
+    if not pid:
+        return {"healthy": False, "reason": "No PID found"}
+
+    try:
+        proc = psutil.Process(pid)
+
+        health_info = {
+            "healthy": True,
+            "pid": pid,
+            "status": proc.status(),
+            "running": proc.is_running(),
+            "memory_mb": proc.memory_info().rss / 1024 / 1024,
+            "cpu_percent": proc.cpu_percent(),
+            "threads": proc.num_threads(),
+            "create_time": proc.create_time(),
+            "cwd": proc.cwd()
+        }
+
+        # Check for concerning states
+        if proc.status() == 'zombie':
+            health_info["healthy"] = False
+            health_info["reason"] = "Process is zombie"
+        elif not proc.is_running():
+            health_info["healthy"] = False
+            health_info["reason"] = "Process not running"
+
+        return health_info
+
+    except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+        return {
+            "healthy": False,
+            "reason": f"Cannot access process: {e}",
+            "pid": pid
+        }
 
 
 class MinecraftServer:

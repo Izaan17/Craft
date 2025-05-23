@@ -205,6 +205,28 @@ def find_available_port(start_port: int = 25565, max_attempts: int = 10) -> Opti
     return None
 
 
+def check_process_health(pid: int) -> Dict[str, Any]:
+    """Check the health of a process by PID"""
+    try:
+        import psutil
+        proc = psutil.Process(pid)
+
+        return {
+            "exists": True,
+            "running": proc.is_running(),
+            "status": proc.status(),
+            "memory_mb": proc.memory_info().rss / 1024 / 1024,
+            "cpu_percent": proc.cpu_percent(),
+            "threads": proc.num_threads(),
+            "create_time": proc.create_time()
+        }
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return {
+            "exists": False,
+            "error": "Process not accessible"
+        }
+
+
 def safe_delete_file(file_path: Path, max_attempts: int = 3) -> bool:
     """Safely delete a file with retries"""
     for attempt in range(max_attempts):
