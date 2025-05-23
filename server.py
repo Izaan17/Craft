@@ -310,8 +310,7 @@ class MinecraftServer:
         if not pid:
             return False
 
-        return (self.process_manager.is_process_running(pid) and
-                self._is_port_open(self.config.get("server_port")))
+        return self.process_manager.is_process_running(pid)
 
     def _is_port_open(self, port: int) -> bool:
         """Check if port is open"""
