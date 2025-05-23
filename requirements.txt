@@ -1,3 +1,17 @@
-loguru==0.7.3
-psutil==7.0.0
-rich==14.0.0
+# Craft Minecraft Server Manager - Dependencies
+# Install with: pip install -r requirements.txt
+
+# Core dependencies
+psutil>=5.9.0
+rich>=13.0.0
+
+# Optional monitoring dependencies (install with: pip install -r requirements-monitoring.txt)
+# prometheus-client>=0.14.0
+# influxdb-client>=1.30.0
+
+# Development dependencies (install with: pip install -r requirements-dev.txt)
+# pytest>=6.0
+# black>=22.0
+# flake8>=4.0
+# mypy>=0.900
+# pre-commit>=2.20.0
