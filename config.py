@@ -96,7 +96,7 @@ class Config:
 
                 if isinstance(default, int):
                     try:
-                        int(response)
+                        val = int(response)
                     except ValueError:
                         console.print(f"[yellow]Invalid number for {key}, keeping current value[/yellow]")
                         val = current
