@@ -3,13 +3,13 @@ Minecraft server management for Craft Minecraft Server Manager
 """
 
 import shlex
-import socket  # Keep socket for _is_port_open if you still want the underlying function,
-# but we will remove calls to it for status check
+import socket
 import subprocess
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
+import psutil
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
@@ -37,7 +37,7 @@ class MinecraftServer:
             console.print("[yellow]⚠️  Server is already running[/yellow]")
             return False
 
-        # Validate configuration first (only basic checks, not port or EULA)
+        # Validate configuration first
         if not self.config.validate_server_setup():
             console.print("[red]❌ Server setup validation failed[/red]")
             return False
@@ -64,8 +64,11 @@ class MinecraftServer:
         # Ensure server directory exists
         self.server_dir.mkdir(parents=True, exist_ok=True)
 
-        # Removed: _setup_eula()
-        # Removed: _setup_server_properties()
+        # Accept EULA
+        self._setup_eula()
+
+        # Setup server properties if needed
+        self._setup_server_properties()
 
         # Build Java command
         java_cmd = self._build_java_command()
@@ -93,21 +96,85 @@ class MinecraftServer:
                 # Save PID
                 self.process_manager.save_pid(self.process.pid)
 
-                # Removed: _wait_for_startup()
-                # Removed: psutil and stats setup coupled with _wait_for_startup
-
-                console.print("[green]✅ Server process launched![/green]")
-                console.print(f"[dim]PID: {self.process.pid}[/dim]")
-                return True
+                # Wait for server to start
+                if self._wait_for_startup():
+                    psutil_process = psutil.Process(self.process.pid)
+                    self.stats.set_process(psutil_process)
+                    console.print("[green]✅ Server started successfully![/green]")
+                    console.print(f"[dim]PID: {self.process.pid} | Port: {self.config.get('server_port')}[/dim]")
+                    return True
+                else:
+                    self._cleanup_failed_start()
+                    return False
 
             except Exception as e:
                 self._cleanup_failed_start()
                 raise e
 
-    # Removed: _setup_eula method entirely
-    # Removed: _setup_server_properties method entirely
-    # Removed: _update_properties_file method entirely
-    # Removed: _create_properties_file method entirely
+    def _setup_eula(self):
+        """Setup EULA acceptance"""
+        eula_path = self.server_dir / "eula.txt"
+        if not eula_path.exists():
+            eula_path.write_text("eula=true\n")
+            console.print("[cyan]📝 EULA accepted[/cyan]")
+
+    def _setup_server_properties(self):
+        """Setup server.properties with config values"""
+        properties_path = self.server_dir / "server.properties"
+
+        # Basic properties to set
+        properties = {
+            "server-port": self.config.get("server_port"),
+            "enable-query": str(self.config.get("enable_query")).lower(),
+            "query.port": self.config.get("query_port"),
+            "enable-rcon": str(self.config.get("enable_rcon")).lower(),
+        }
+
+        if self.config.get("enable_rcon"):
+            properties["rcon.port"] = self.config.get("rcon_port")
+            properties["rcon.password"] = self.config.get("rcon_password")
+
+        # Update properties file
+        if properties_path.exists():
+            self._update_properties_file(properties_path, properties)
+        else:
+            self._create_properties_file(properties_path, properties)
+
+    def _update_properties_file(self, properties_path: Path, new_properties: dict):
+        """Update existing server.properties file"""
+        try:
+            lines = properties_path.read_text().splitlines()
+            updated_lines = []
+            updated_keys = set()
+
+            for line in lines:
+                if '=' in line and not line.strip().startswith('#'):
+                    key = line.split('=')[0].strip()
+                    if key in new_properties:
+                        updated_lines.append(f"{key}={new_properties[key]}")
+                        updated_keys.add(key)
+                    else:
+                        updated_lines.append(line)
+                else:
+                    updated_lines.append(line)
+
+            # Add any new properties
+            for key, value in new_properties.items():
+                if key not in updated_keys:
+                    updated_lines.append(f"{key}={value}")
+
+            properties_path.write_text('\n'.join(updated_lines) + '\n')
+
+        except Exception as e:
+            console.print(f"[yellow]⚠️  Could not update server.properties: {e}[/yellow]")
+
+    def _create_properties_file(self, properties_path: Path, properties: dict):
+        """Create a basic server.properties file"""
+        content = "# Minecraft server properties\n"
+        for key, value in properties.items():
+            content += f"{key}={value}\n"
+
+        properties_path.write_text(content)
 
     def _build_java_command(self) -> List[str]:
         """Build the Java command for starting the server"""
@@ -129,7 +196,24 @@ class MinecraftServer:
 
         return cmd
 
-    # Removed: _wait_for_startup method entirely
+    def _wait_for_startup(self, timeout: int = 120) -> bool:
+        """Wait for server to start up properly"""
+        start_time = time.time()
+
+        while time.time() - start_time < timeout:
+            if not self.process or self.process.poll() is not None:
+                console.print("[red]❌ Server process terminated during startup[/red]")
+                return False
+
+            # Check if server port is open
+            if self._is_port_open(self.config.get("server_port")):
+                time.sleep(3)  # Give it a moment to fully initialize
+                return True
+
+            time.sleep(2)
+
+        console.print(f"[red]❌ Server startup timeout ({timeout}s)[/red]")
+        return False
 
     def _cleanup_failed_start(self):
         """Cleanup after failed start"""
@@ -223,9 +307,9 @@ class MinecraftServer:
         if not pid:
             return False
 
-        return self.process_manager.is_process_running(pid)
+        return (self.process_manager.is_process_running(pid) and
+                self._is_port_open(self.config.get("server_port")))
 
-    # Kept _is_port_open but removed calls to it from status and startup
     def _is_port_open(self, port: int) -> bool:
         """Check if port is open"""
         try:
