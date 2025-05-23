@@ -9,7 +9,6 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
-import psutil
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
@@ -65,10 +64,10 @@ class MinecraftServer:
         self.server_dir.mkdir(parents=True, exist_ok=True)
 
         # Accept EULA
-        self._setup_eula()
+        # self._setup_eula()
 
         # Setup server properties if needed
-        self._setup_server_properties()
+        # self._setup_server_properties()
 
         # Build Java command
         java_cmd = self._build_java_command()
@@ -97,15 +96,19 @@ class MinecraftServer:
                 self.process_manager.save_pid(self.process.pid)
 
                 # Wait for server to start
-                if self._wait_for_startup():
-                    psutil_process = psutil.Process(self.process.pid)
-                    self.stats.set_process(psutil_process)
-                    console.print("[green]✅ Server started successfully![/green]")
-                    console.print(f"[dim]PID: {self.process.pid} | Port: {self.config.get('server_port')}[/dim]")
-                    return True
-                else:
-                    self._cleanup_failed_start()
-                    return False
+                # if self._wait_for_startup():
+                #     psutil_process = psutil.Process(self.process.pid)
+                #     self.stats.set_process(psutil_process)
+                #     console.print("[green]✅ Server started successfully![/green]")
+                #     console.print(f"[dim]PID: {self.process.pid} | Port: {self.config.get('server_port')}[/dim]")
+                #     return True
+                # else:
+                #     self._cleanup_failed_start()
+                #     return False
+
+                console.print("[green]✅ Server process launched![/green]")
+                console.print(f"[dim]PID: {self.process.pid}[/dim]")
+                return True
 
             except Exception as e:
                 self._cleanup_failed_start()
