@@ -130,14 +130,13 @@ class StatusDisplay:
                 table.add_row("Avg CPU (5m)", f"{avg['avg_cpu_percent']:.1f}%")
         else:
             table.add_row("Status", "[red]🔴 Stopped[/red]")
-            table.add_row("Port", "❌ Closed" if not status["port_open"] else "⚠️  Open but no server")
 
         # Configuration info
         config = status.get("config", {})
         table.add_row("", "")  # Separator
         table.add_row("JAR", config.get("jar_name", "Unknown"))
         table.add_row("Max Memory", config.get("memory_max", "Unknown"))
-        table.add_row("Port", str(config.get("server_port", "Unknown")))
+        table.add_row("Server Type", config.get("server_type", "Minecraft"))
 
         return table
 
@@ -210,9 +209,10 @@ class StatusDisplay:
             if world.get("exists", False):
                 table.add_row("World Size", f"{world.get('size_mb', 0):.1f} MB")
 
-        # Port status
-        port_status = "🟢 Open" if status["port_open"] else "🔴 Closed"
-        table.add_row("Port Status", port_status)
+        # Server type
+        config = status.get("config", {})
+        server_type = config.get("server_type", "Minecraft")
+        table.add_row("Server Type", server_type)
 
         # Performance indicators
         if status["running"] and "peaks" in status:
@@ -422,10 +422,9 @@ class StatusDisplay:
             normalized.append(norm)
 
         # Create chart
-        chart_lines = []
+        chart_lines = [f"Max: {max_val:.1f}"]
 
         # Add scale
-        chart_lines.append(f"Max: {max_val:.1f}")
 
         # Create bars
         for i, norm_val in enumerate(normalized[-20:]):  # Show last 20 points

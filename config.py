@@ -12,22 +12,15 @@ from rich.prompt import Prompt, Confirm, IntPrompt
 
 console = Console()
 
-
 class ConfigManager:
     """Enhanced configuration management with validation"""
 
     DEFAULTS = {
         "server_dir": "server",
-        "jar_name": "server.jar",
-        "memory_min": "1G",
+        "jar_name": "neoforge-server.jar",
+        "memory_min": "2G",
         "memory_max": "4G",
-        "java_args": "-XX:+UseG1GC -XX:+UnlockExperimentalVMOptions -XX:MaxGCPauseMillis=100",
-        "server_port": 25565,
-        "query_port": 25565,
-        "rcon_port": 25575,
-        "rcon_password": "",
-        "enable_rcon": False,
-        "enable_query": True,
+        "java_args": "-XX:+UseG1GC -XX:+UnlockExperimentalVMOptions -XX:MaxGCPauseMillis=100 -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 -XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=32M",
         "backup_dir": "backups",
         "max_backups": 10,
         "auto_backup": True,
@@ -103,24 +96,39 @@ class ConfigManager:
 
     def interactive_setup(self):
         """Interactive configuration setup"""
-        console.print(Panel.fit("🎯 Craft Server Configuration", style="bold cyan"))
+        console.print(Panel.fit("🎯 Craft NeoForge Server Configuration", style="bold cyan"))
         console.print("[dim]Press Enter to keep current values[/dim]\n")
 
         # Server settings
         console.print("[bold]Server Settings[/bold]")
         self.set("server_dir", Prompt.ask("Server directory", default=self.get("server_dir")))
+
+        current_jar = self.get("jar_name")
+        if "server.jar" in current_jar:
+            # Suggest NeoForge naming
+            console.print("[yellow]💡 Consider renaming to neoforge-server.jar for clarity[/yellow]")
+
         self.set("jar_name", Prompt.ask("JAR filename", default=self.get("jar_name")))
-        self.set("memory_min", Prompt.ask("Minimum memory (e.g., 1G)", default=self.get("memory_min")))
+        self.set("memory_min", Prompt.ask("Minimum memory (e.g., 2G)", default=self.get("memory_min")))
         self.set("memory_max", Prompt.ask("Maximum memory (e.g., 4G)", default=self.get("memory_max")))
-        self.set("server_port", IntPrompt.ask("Server port", default=self.get("server_port")))
 
         # Advanced Java settings
         console.print("\n[bold]Performance Settings[/bold]")
-        if Confirm.ask("Configure advanced Java arguments?", default=False):
+        console.print("[dim]NeoForge works best with G1GC and specific optimizations[/dim]")
+        if Confirm.ask("Configure Java arguments (recommended for NeoForge)?", default=True):
             current_args = self.get("java_args")
             console.print(f"[dim]Current: {current_args}[/dim]")
-            new_args = Prompt.ask("Java arguments", default=current_args)
-            self.set("java_args", new_args)
+
+            # Suggest NeoForge-optimized settings
+            suggested_args = "-XX:+UseG1GC -XX:+UnlockExperimentalVMOptions -XX:MaxGCPauseMillis=100 -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 -XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=32M"
+
+            use_suggested = Confirm.ask("Use NeoForge-optimized Java arguments?", default=True)
+            if use_suggested:
+                self.set("java_args", suggested_args)
+                console.print("[green]✅ Applied NeoForge-optimized settings[/green]")
+            else:
+                new_args = Prompt.ask("Custom Java arguments", default=current_args)
+                self.set("java_args", new_args)
 
         # Backup settings
         console.print("\n[bold]Backup Settings[/bold]")
@@ -146,18 +154,9 @@ class ConfigManager:
                 new_cooldown = IntPrompt.ask("Restart cooldown (minutes)", default=cooldown_mins)
                 self.set("restart_cooldown", new_cooldown * 60)
 
-        # RCON settings (optional)
-        console.print("\n[bold]Remote Console (Optional)[/bold]")
-        if Confirm.ask("Enable RCON for remote management?", default=self.get("enable_rcon")):
-            self.set("enable_rcon", True)
-            self.set("rcon_port", IntPrompt.ask("RCON port", default=self.get("rcon_port")))
-            rcon_pass = Prompt.ask("RCON password", password=True, default=self.get("rcon_password"))
-            self.set("rcon_password", rcon_pass)
-        else:
-            self.set("enable_rcon", False)
-
         console.print("\n[bold green]✅ Configuration saved![/bold green]")
         console.print(f"[dim]Config file: {self.config_path.absolute()}[/dim]")
+        console.print("\n[cyan]💡 Note: NeoForge handles server ports, EULA, and server.properties automatically[/cyan]")
 
     def validate_server_setup(self) -> bool:
         """Validate that server is properly configured"""
@@ -170,13 +169,33 @@ class ConfigManager:
             issues.append(f"Server directory doesn't exist: {server_dir}")
 
         if not jar_path.exists():
-            issues.append(f"Server JAR not found: {jar_path}")
+            issues.append(f"NeoForge server JAR not found: {jar_path}")
+            issues.append("Download NeoForge from: https://neoforged.net/")
 
         backup_dir = Path(self.get("backup_dir"))
         try:
             backup_dir.mkdir(parents=True, exist_ok=True)
         except PermissionError:
             issues.append(f"Cannot create backup directory: {backup_dir}")
+
+        # Check memory settings
+        memory_min = self.get("memory_min")
+        memory_max = self.get("memory_max")
+
+        from utils import validate_memory_setting, parse_memory_to_mb
+
+        if not validate_memory_setting(memory_min):
+            issues.append(f"Invalid minimum memory setting: {memory_min}")
+
+        if not validate_memory_setting(memory_max):
+            issues.append(f"Invalid maximum memory setting: {memory_max}")
+
+        # Check that max >= min
+        if validate_memory_setting(memory_min) and validate_memory_setting(memory_max):
+            min_mb = parse_memory_to_mb(memory_min)
+            max_mb = parse_memory_to_mb(memory_max)
+            if min_mb and max_mb and min_mb > max_mb:
+                issues.append("Minimum memory cannot be greater than maximum memory")
 
         if issues:
             console.print("[red]Configuration issues found:[/red]")
@@ -191,9 +210,9 @@ class ConfigManager:
         return {
             "server_jar": f"{self.get('server_dir')}/{self.get('jar_name')}",
             "memory": f"{self.get('memory_min')} - {self.get('memory_max')}",
-            "port": self.get("server_port"),
             "auto_backup": "Enabled" if self.get("auto_backup") else "Disabled",
             "backup_interval": f"{self.get('backup_interval') // 3600}h" if self.get("auto_backup") else "N/A",
             "watchdog": "Enabled" if self.get("watchdog_enabled") else "Disabled",
-            "auto_restart": "Enabled" if self.get("restart_on_crash") else "Disabled"
+            "auto_restart": "Enabled" if self.get("restart_on_crash") else "Disabled",
+            "server_type": "NeoForge"
         }

@@ -1,13 +1,13 @@
 """
 Minecraft server management for Craft Minecraft Server Manager
+Simple process management for NeoForge/Minecraft servers
 """
 
 import shlex
-import socket
 import subprocess
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Any
 
 import psutil
 from rich.console import Console
@@ -19,9 +19,8 @@ from stats import ServerStats
 
 console = Console()
 
-
 class MinecraftServer:
-    """Enhanced Minecraft server management"""
+    """Simple Minecraft server process management"""
 
     def __init__(self, config: ConfigManager):
         self.config = config
@@ -29,7 +28,6 @@ class MinecraftServer:
         self.stats = ServerStats()
         self.server_dir = Path(config.get("server_dir"))
         self.process = None
-        self.console_output = []
 
     def start(self) -> bool:
         """Start the Minecraft server"""
@@ -37,9 +35,11 @@ class MinecraftServer:
             console.print("[yellow]⚠️  Server is already running[/yellow]")
             return False
 
-        # Validate configuration first
-        if not self.config.validate_server_setup():
-            console.print("[red]❌ Server setup validation failed[/red]")
+        # Basic validation
+        jar_path = self.server_dir / self.config.get("jar_name")
+        if not jar_path.exists():
+            console.print(f"[red]❌ JAR file not found: {jar_path}[/red]")
+            console.print(f"[cyan]💡 Place your NeoForge server JAR at: {jar_path}[/cyan]")
             return False
 
         # Acquire lock
@@ -56,19 +56,8 @@ class MinecraftServer:
 
     def _start_server(self) -> bool:
         """Internal server start logic"""
-        jar_path = self.server_dir / self.config.get("jar_name")
-        if not jar_path.exists():
-            console.print(f"[red]❌ JAR file not found: {jar_path}[/red]")
-            return False
-
         # Ensure server directory exists
         self.server_dir.mkdir(parents=True, exist_ok=True)
-
-        # Accept EULA
-        self._setup_eula()
-
-        # Setup server properties if needed
-        self._setup_server_properties()
 
         # Build Java command
         java_cmd = self._build_java_command()
@@ -78,7 +67,7 @@ class MinecraftServer:
                 TextColumn("[progress.description]{task.description}"),
                 console=console
         ) as progress:
-            task = progress.add_task("Starting server...", total=None)
+            task = progress.add_task("Starting NeoForge server...", total=None)
 
             try:
                 # Start server process
@@ -96,12 +85,12 @@ class MinecraftServer:
                 # Save PID
                 self.process_manager.save_pid(self.process.pid)
 
-                # Wait for server to start
+                # Wait for process to stabilize
                 if self._wait_for_startup():
                     psutil_process = psutil.Process(self.process.pid)
                     self.stats.set_process(psutil_process)
-                    console.print("[green]✅ Server started successfully![/green]")
-                    console.print(f"[dim]PID: {self.process.pid} | Port: {self.config.get('server_port')}[/dim]")
+                    console.print("[green]✅ NeoForge server started successfully![/green]")
+                    console.print(f"[dim]PID: {self.process.pid} | Working Dir: {self.server_dir}[/dim]")
                     return True
                 else:
                     self._cleanup_failed_start()
@@ -110,71 +99,6 @@ class MinecraftServer:
             except Exception as e:
                 self._cleanup_failed_start()
                 raise e
-
-    def _setup_eula(self):
-        """Setup EULA acceptance"""
-        eula_path = self.server_dir / "eula.txt"
-        if not eula_path.exists():
-            eula_path.write_text("eula=true\n")
-            console.print("[cyan]📝 EULA accepted[/cyan]")
-
-    def _setup_server_properties(self):
-        """Setup server.properties with config values"""
-        properties_path = self.server_dir / "server.properties"
-
-        # Basic properties to set
-        properties = {
-            "server-port": self.config.get("server_port"),
-            "enable-query": str(self.config.get("enable_query")).lower(),
-            "query.port": self.config.get("query_port"),
-            "enable-rcon": str(self.config.get("enable_rcon")).lower(),
-        }
-
-        if self.config.get("enable_rcon"):
-            properties["rcon.port"] = self.config.get("rcon_port")
-            properties["rcon.password"] = self.config.get("rcon_password")
-
-        # Update properties file
-        if properties_path.exists():
-            self._update_properties_file(properties_path, properties)
-        else:
-            self._create_properties_file(properties_path, properties)
-
-    def _update_properties_file(self, properties_path: Path, new_properties: dict):
-        """Update existing server.properties file"""
-        try:
-            lines = properties_path.read_text().splitlines()
-            updated_lines = []
-            updated_keys = set()
-
-            for line in lines:
-                if '=' in line and not line.strip().startswith('#'):
-                    key = line.split('=')[0].strip()
-                    if key in new_properties:
-                        updated_lines.append(f"{key}={new_properties[key]}")
-                        updated_keys.add(key)
-                    else:
-                        updated_lines.append(line)
-                else:
-                    updated_lines.append(line)
-
-            # Add any new properties
-            for key, value in new_properties.items():
-                if key not in updated_keys:
-                    updated_lines.append(f"{key}={value}")
-
-            properties_path.write_text('\n'.join(updated_lines) + '\n')
-
-        except Exception as e:
-            console.print(f"[yellow]⚠️  Could not update server.properties: {e}[/yellow]")
-
-    def _create_properties_file(self, properties_path: Path, properties: dict):
-        """Create a basic server.properties file"""
-        content = "# Minecraft server properties\n"
-        for key, value in properties.items():
-            content += f"{key}={value}\n"
-
-        properties_path.write_text(content)
 
     def _build_java_command(self) -> List[str]:
         """Build the Java command for starting the server"""
@@ -191,26 +115,29 @@ class MinecraftServer:
         if java_args:
             cmd.extend(shlex.split(java_args))
 
-        # JAR file
+        # JAR file and nogui flag
         cmd.extend(["-jar", self.config.get("jar_name"), "nogui"])
 
         return cmd
 
-    def _wait_for_startup(self, timeout: int = 120) -> bool:
-        """Wait for server to start up properly"""
+    def _wait_for_startup(self, timeout: int = 60) -> bool:
+        """Wait for server process to start properly"""
         start_time = time.time()
 
         while time.time() - start_time < timeout:
-            if not self.process or self.process.poll() is not None:
+            if not self.process:
+                return False
+
+            # Check if process terminated
+            if self.process.poll() is not None:
                 console.print("[red]❌ Server process terminated during startup[/red]")
                 return False
 
-            # Check if server port is open
-            if self._is_port_open(self.config.get("server_port")):
-                time.sleep(3)  # Give it a moment to fully initialize
+            # Process is running, give it a moment to initialize
+            if time.time() - start_time > 5:  # Wait at least 5 seconds
                 return True
 
-            time.sleep(2)
+            time.sleep(1)
 
         console.print(f"[red]❌ Server startup timeout ({timeout}s)[/red]")
         return False
@@ -245,7 +172,7 @@ class MinecraftServer:
             task = progress.add_task("Stopping server...", total=None)
 
             try:
-                # Send stop command
+                # Send stop command to server
                 if self.send_command("stop", silent=True):
                     console.print("[cyan]📤 Stop command sent[/cyan]")
 
@@ -256,7 +183,7 @@ class MinecraftServer:
                         break
                     time.sleep(1)
                 else:
-                    # Force stop
+                    # Force stop if graceful shutdown failed
                     console.print("[yellow]⚠️  Forcing server shutdown...[/yellow]")
                     return self._force_stop()
 
@@ -302,25 +229,15 @@ class MinecraftServer:
         return self.start()
 
     def is_running(self) -> bool:
-        """Check if server is running"""
+        """Check if server is running (process-based, no port checking)"""
         pid = self.process_manager.get_pid()
         if not pid:
             return False
 
-        return (self.process_manager.is_process_running(pid) and
-                self._is_port_open(self.config.get("server_port")))
-
-    def _is_port_open(self, port: int) -> bool:
-        """Check if port is open"""
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.settimeout(2)
-                return s.connect_ex(('localhost', port)) == 0
-        except:
-            return False
+        return self.process_manager.is_process_running(pid)
 
     def send_command(self, command: str, silent: bool = False) -> bool:
-        """Send command to server"""
+        """Send command to server console"""
         if not self.is_running():
             if not silent:
                 console.print("[red]❌ Server is not running[/red]")
@@ -343,7 +260,6 @@ class MinecraftServer:
         """Get comprehensive server status"""
         base_status = {
             "running": self.is_running(),
-            "port_open": self._is_port_open(self.config.get("server_port")),
             "config": self.config.get_summary()
         }
 
@@ -354,12 +270,6 @@ class MinecraftServer:
             base_status["peaks"] = self.stats.get_peak_stats()
 
         return base_status
-
-    def get_players(self) -> Optional[List[str]]:
-        """Get list of online players (requires RCON or log parsing)"""
-        # This could be implemented with RCON if enabled
-        # For now, return None to indicate feature not implemented
-        return None
 
     def get_world_info(self) -> Dict[str, Any]:
         """Get world information"""
