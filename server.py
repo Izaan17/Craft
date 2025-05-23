@@ -190,57 +190,82 @@ class MinecraftServer:
         self.process_manager.release_lock()
         self.stats.clear_process()
 
-    def stop(self, timeout: int = 30) -> bool:
-        """Stop the server gracefully"""
+    def stop(self, force: bool = None, timeout: int = None) -> bool:
+        """Stop the server (defaults to force stop for faster shutdown)"""
         if not self.is_running():
             console.print("[yellow]⚠️  Server is not running[/yellow]")
             return True
 
-        with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                console=console
-        ) as progress:
-            task = progress.add_task("Stopping server...", total=None)
+        # Use config defaults if not specified
+        if force is None:
+            force = self.config.get("force_stop", True)
+        if timeout is None:
+            timeout = self.config.get("stop_timeout", 10)
 
-            try:
-                # Send stop command to server
-                if self.send_command("stop", silent=True):
-                    console.print("[cyan]📤 Stop command sent[/cyan]")
+        if force:
+            console.print("[cyan]🔧 Force stopping server...[/cyan]")
+            return self._force_stop()
+        else:
+            # Try graceful stop first
+            with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    console=console
+            ) as progress:
+                task = progress.add_task("Stopping server gracefully...", total=None)
 
-                # Wait for graceful shutdown
-                start_time = time.time()
-                while time.time() - start_time < timeout:
-                    if not self.is_running():
-                        break
-                    time.sleep(1)
-                else:
-                    # Force stop if graceful shutdown failed
-                    console.print("[yellow]⚠️  Forcing server shutdown...[/yellow]")
+                try:
+                    # Send stop command to server
+                    if self.send_command("stop", silent=True):
+                        console.print("[cyan]📤 Stop command sent[/cyan]")
+
+                    # Wait for graceful shutdown
+                    start_time = time.time()
+                    while time.time() - start_time < timeout:
+                        if not self.is_running():
+                            break
+                        time.sleep(1)
+                    else:
+                        # Force stop if graceful shutdown failed
+                        console.print("[yellow]⚠️  Graceful shutdown timeout, forcing stop...[/yellow]")
+                        return self._force_stop()
+
+                    self._cleanup_after_stop()
+                    console.print("[green]✅ Server stopped gracefully[/green]")
+                    return True
+
+                except Exception as e:
+                    console.print(f"[red]❌ Error during graceful stop: {e}[/red]")
+                    console.print("[yellow]⚠️  Falling back to force stop...[/yellow]")
                     return self._force_stop()
-
-                self._cleanup_after_stop()
-                console.print("[green]✅ Server stopped gracefully[/green]")
-                return True
-
-            except Exception as e:
-                console.print(f"[red]❌ Error stopping server: {e}[/red]")
-                return self._force_stop()
 
     def _force_stop(self) -> bool:
         """Force stop the server"""
         try:
+            # First try to terminate gracefully, then kill if needed
             pid = self.process_manager.get_pid()
-            if pid and self.process_manager.kill_process(pid):
-                self._cleanup_after_stop()
-                console.print("[green]✅ Server force stopped[/green]")
-                return True
+            if pid:
+                success = self.process_manager.kill_process(pid, timeout=5)
+                if success:
+                    self._cleanup_after_stop()
+                    console.print("[green]✅ Server force stopped[/green]")
+                    return True
+                else:
+                    console.print("[red]❌ Failed to force stop server[/red]")
+                    return False
             else:
-                console.print("[red]❌ Failed to force stop server[/red]")
-                return False
+                # No PID found, try to cleanup anyway
+                self._cleanup_after_stop()
+                console.print("[yellow]⚠️  No PID found, cleaned up tracking files[/yellow]")
+                return True
 
         except Exception as e:
             console.print(f"[red]❌ Error during force stop: {e}[/red]")
+            # Try cleanup anyway
+            try:
+                self._cleanup_after_stop()
+            except:
+                pass
             return False
 
     def _cleanup_after_stop(self):

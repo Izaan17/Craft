@@ -13,6 +13,7 @@ from backup import BackupManager
 
 console = Console()
 
+
 class Watchdog:
     """Enhanced server monitoring and auto-restart"""
 
@@ -42,17 +43,33 @@ class Watchdog:
             console.print("[yellow]⚠️  Watchdog is already running[/yellow]")
             return False
 
-        self.running = True
-        self.monitoring_stats["start_time"] = datetime.now()
-        self.thread = threading.Thread(target=self._monitor_loop, daemon=True)
-        self.thread.start()
+        try:
+            self.running = True
+            self.monitoring_stats["start_time"] = datetime.now()
+            self.thread = threading.Thread(target=self._monitor_loop, daemon=True)
+            self.thread.start()
 
-        # Start auto-backup
-        self.backup_manager.start_auto_backup()
+            # Start auto-backup
+            self.backup_manager.start_auto_backup()
 
-        interval = self.config.get("watchdog_interval")
-        console.print(f"[green]🐕 Watchdog started (checking every {interval}s)[/green]")
-        return True
+            interval = self.config.get("watchdog_interval")
+            console.print(f"[green]🐕 Watchdog started (checking every {interval}s)[/green]")
+
+            # Give the thread a moment to start
+            time.sleep(0.5)
+
+            # Verify it's actually running
+            if not self.thread.is_alive():
+                console.print("[red]❌ Watchdog thread failed to start[/red]")
+                self.running = False
+                return False
+
+            return True
+
+        except Exception as e:
+            console.print(f"[red]❌ Failed to start watchdog: {e}[/red]")
+            self.running = False
+            return False
 
     def stop(self):
         """Stop the watchdog"""
@@ -66,7 +83,8 @@ class Watchdog:
         if self.thread:
             self.thread.join(timeout=5)
 
-        uptime = datetime.now() - self.monitoring_stats["start_time"] if self.monitoring_stats["start_time"] else timedelta(0)
+        uptime = datetime.now() - self.monitoring_stats["start_time"] if self.monitoring_stats[
+            "start_time"] else timedelta(0)
         console.print(f"[yellow]🐕 Watchdog stopped (ran for {str(uptime).split('.')[0]})[/yellow]")
 
     def _monitor_loop(self):
@@ -86,7 +104,8 @@ class Watchdog:
                     # Server is running, reset restart count after cooldown period
                     if time.time() - self.last_restart > self.config.get("restart_cooldown"):
                         if self.restart_count > 0:
-                            console.print(f"[green]✅ Server stable - reset restart count (was {self.restart_count})[/green]")
+                            console.print(
+                                f"[green]✅ Server stable - reset restart count (was {self.restart_count})[/green]")
                             self.restart_count = 0
 
                 # Perform health checks
@@ -113,7 +132,8 @@ class Watchdog:
             time_since_last = current_time - self.last_restart
             if time_since_last < cooldown:
                 remaining = cooldown - time_since_last
-                console.print(f"[red]🚫 Too many restarts ({self.restart_count}/{max_restarts}), waiting {remaining:.0f}s...[/red]")
+                console.print(
+                    f"[red]🚫 Too many restarts ({self.restart_count}/{max_restarts}), waiting {remaining:.0f}s...[/red]")
                 time.sleep(min(remaining, 60))  # Sleep max 60s in monitoring loop
                 return
             else:
@@ -223,12 +243,21 @@ class Watchdog:
 
     def get_status(self) -> Dict[str, Any]:
         """Get comprehensive watchdog status"""
+        # Calculate uptime
         uptime = None
-        if self.monitoring_stats["start_time"]:
+        if self.monitoring_stats["start_time"] and self.running:
             uptime = datetime.now() - self.monitoring_stats["start_time"]
 
+        # Check if thread is actually alive
+        thread_alive = self.thread is not None and self.thread.is_alive()
+
+        # Watchdog is truly running if both flags are true and thread is alive
+        actually_running = self.running and thread_alive
+
         status = {
-            "running": self.running,
+            "running": actually_running,
+            "thread_alive": thread_alive,
+            "running_flag": self.running,
             "restart_count": self.restart_count,
             "last_restart": datetime.fromtimestamp(self.last_restart) if self.last_restart else None,
             "restart_history": self.restart_history[-10:],  # Last 10 restarts

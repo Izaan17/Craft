@@ -265,15 +265,25 @@ class StatusDisplay:
         table.add_column("Property", style="cyan", no_wrap=True)
         table.add_column("Value", style="white")
 
-        # Watchdog status
-        if watchdog_status["running"]:
+        # Watchdog status with more detail
+        running = watchdog_status["running"]
+        thread_alive = watchdog_status.get("thread_alive", False)
+        running_flag = watchdog_status.get("running_flag", False)
+
+        if running:
             watchdog_text = "[green]🟢 Active[/green]"
         else:
             watchdog_text = "[red]🔴 Inactive[/red]"
+            # Show debug info if not running properly
+            if running_flag and not thread_alive:
+                watchdog_text += " [dim](thread died)[/dim]"
+            elif not running_flag:
+                watchdog_text += " [dim](stopped)[/dim]"
+
         table.add_row("Watchdog", watchdog_text)
 
         # Uptime
-        if watchdog_status["uptime"]:
+        if watchdog_status["uptime"] and running:
             uptime_str = str(watchdog_status["uptime"]).split('.')[0]
             table.add_row("Monitor Uptime", uptime_str)
 
@@ -540,10 +550,9 @@ class StatusDisplay:
             normalized.append(norm)
 
         # Create chart
-        chart_lines = []
+        chart_lines = [f"Max: {max_val:.1f}"]
 
         # Add scale
-        chart_lines.append(f"Max: {max_val:.1f}")
 
         # Create bars
         for i, norm_val in enumerate(normalized[-20:]):  # Show last 20 points

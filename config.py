@@ -3,6 +3,7 @@ Configuration management for Craft Minecraft Server Manager
 """
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,22 @@ from rich.panel import Panel
 from rich.prompt import Prompt, Confirm, IntPrompt
 
 console = Console()
+
+
+def get_config_dir() -> Path:
+    """Get the appropriate configuration directory for the platform"""
+    if os.name == 'nt':  # Windows
+        config_dir = Path(os.environ.get('APPDATA', Path.home())) / 'craft'
+    else:  # Linux/macOS
+        # Use XDG_CONFIG_HOME if set, otherwise ~/.config
+        xdg_config = os.environ.get('XDG_CONFIG_HOME')
+        if xdg_config:
+            config_dir = Path(xdg_config) / 'craft'
+        else:
+            config_dir = Path.home() / '.config' / 'craft'
+
+    return config_dir
+
 
 class ConfigManager:
     """Enhanced configuration management with validation"""
@@ -32,13 +49,27 @@ class ConfigManager:
         "max_restarts": 5,
         "restart_cooldown": 300,  # 5 minutes
         "log_level": "INFO",
-        "console_history": 1000
+        "console_history": 1000,
+        "force_stop": True,  # Default to force stop for faster shutdown
+        "stop_timeout": 10  # Reduced timeout before force stop
     }
 
-    def __init__(self, config_path: Path = Path("config.json")):
-        self.config_path = config_path
+    def __init__(self, config_path: Path = None):
+        if config_path is None:
+            # Use platform-appropriate config directory
+            config_dir = get_config_dir()
+            config_dir.mkdir(parents=True, exist_ok=True)
+            self.config_path = config_dir / "config.json"
+        else:
+            self.config_path = config_path
+
         self.data = {}
         self.load()
+
+        # Show config location on first run
+        if not hasattr(self, '_shown_location'):
+            console.print(f"[dim]Config: {self.config_path}[/dim]")
+            self._shown_location = True
 
     def load(self):
         """Load configuration from file"""
@@ -153,6 +184,17 @@ class ConfigManager:
                 cooldown_mins = self.get("restart_cooldown") // 60
                 new_cooldown = IntPrompt.ask("Restart cooldown (minutes)", default=cooldown_mins)
                 self.set("restart_cooldown", new_cooldown * 60)
+
+        # Server shutdown settings
+        console.print("\n[bold]Shutdown Settings[/bold]")
+        console.print("[dim]NeoForge servers can be slow to stop gracefully[/dim]")
+
+        force_stop_default = self.get("force_stop", True)
+        self.set("force_stop", Confirm.ask("Use force stop by default (faster)", default=force_stop_default))
+
+        if not self.get("force_stop"):
+            timeout_default = self.get("stop_timeout", 10)
+            self.set("stop_timeout", IntPrompt.ask("Graceful stop timeout (seconds)", default=timeout_default))
 
         console.print("\n[bold green]✅ Configuration saved![/bold green]")
         console.print(f"[dim]Config file: {self.config_path.absolute()}[/dim]")

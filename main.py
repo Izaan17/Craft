@@ -6,11 +6,14 @@ Main entry point and command-line interface
 
 import argparse
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import psutil
 from rich.console import Console
+from rich.panel import Panel
 from rich.prompt import Confirm, IntPrompt
+from rich.table import Table
 
 from backup import BackupManager
 from config import ConfigManager
@@ -51,7 +54,11 @@ Examples:
 
     # Server management
     subparsers.add_parser("start", help="Start server")
-    subparsers.add_parser("stop", help="Stop server")
+
+    stop_parser = subparsers.add_parser("stop", help="Stop server")
+    stop_parser.add_argument("--graceful", "-g", action="store_true", help="Try graceful shutdown first")
+    stop_parser.add_argument("--timeout", "-t", type=int, help="Timeout for graceful shutdown")
+
     subparsers.add_parser("restart", help="Restart server")
 
     # Status
@@ -68,6 +75,9 @@ Examples:
     # Logs command
     logs_parser = subparsers.add_parser("logs", help="Show server logs")
     logs_parser.add_argument("--lines", "-n", type=int, default=20, help="Number of lines to show")
+
+    # Config info command
+    subparsers.add_parser("config-info", help="Show configuration file location")
 
     # Backup management
     backup_parser = subparsers.add_parser("backup", help="Create backup")
@@ -120,7 +130,12 @@ Examples:
                 backup_manager.create_backup("pre_stop")
 
             watchdog.stop()
-            server.stop()
+
+            # Handle stop arguments
+            force_stop = not args.graceful if hasattr(args, 'graceful') else None
+            timeout = args.timeout if hasattr(args, 'timeout') and args.timeout else None
+
+            server.stop(force=force_stop, timeout=timeout)
 
         elif args.command == "restart":
             if server.restart():
@@ -141,6 +156,9 @@ Examples:
 
         elif args.command == "logs":
             _show_server_logs(server, args.lines)
+
+        elif args.command == "config-info":
+            _show_config_info(config)
 
         elif args.command == "backup":
             backup_manager.create_backup(args.name)
@@ -183,6 +201,40 @@ Examples:
             import traceback
             traceback.print_exc()
         sys.exit(1)
+
+
+def _show_config_info(config):
+    """Show configuration file information"""
+
+    console.print(Panel.fit("📁 Configuration Information", style="bold cyan"))
+
+    table = Table(show_header=False, box=None)
+    table.add_column("Property", style="cyan", no_wrap=True)
+    table.add_column("Value", style="white")
+
+    table.add_row("Config File", str(config.config_path))
+    table.add_row("Config Directory", str(config.config_path.parent))
+    table.add_row("File Exists", "✅ Yes" if config.config_path.exists() else "❌ No")
+
+    if config.config_path.exists():
+        stat = config.config_path.stat()
+        table.add_row("File Size", f"{stat.st_size} bytes")
+        table.add_row("Last Modified",
+                      datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"))
+
+    # Show some key config values
+    table.add_row("", "")  # Separator
+    table.add_row("Server Directory", config.get("server_dir"))
+    table.add_row("JAR Name", config.get("jar_name"))
+    table.add_row("Memory Max", config.get("memory_max"))
+    table.add_row("Watchdog Enabled", "✅ Yes" if config.get("watchdog_enabled") else "❌ No")
+    table.add_row("Auto Backup", "✅ Yes" if config.get("auto_backup") else "❌ No")
+    table.add_row("Force Stop", "✅ Yes" if config.get("force_stop") else "❌ No")
+
+    console.print(table)
+
+    console.print(f"\n[cyan]💡 Edit config:[/cyan] craft setup")
+    console.print(f"[cyan]💡 View config:[/cyan] cat {config.config_path}")
 
 
 def _show_server_logs(server, lines: int = 20):
