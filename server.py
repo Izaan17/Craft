@@ -3,7 +3,8 @@ Minecraft server management for Craft Minecraft Server Manager
 """
 
 import shlex
-import socket
+import socket  # Keep socket for _is_port_open if you still want the underlying function,
+# but we will remove calls to it for status check
 import subprocess
 import time
 from pathlib import Path
@@ -36,7 +37,7 @@ class MinecraftServer:
             console.print("[yellow]⚠️  Server is already running[/yellow]")
             return False
 
-        # Validate configuration first
+        # Validate configuration first (only basic checks, not port or EULA)
         if not self.config.validate_server_setup():
             console.print("[red]❌ Server setup validation failed[/red]")
             return False
@@ -54,47 +55,59 @@ class MinecraftServer:
             return False
 
     def _start_server(self) -> bool:
-        """Simplified server start without any file modifications"""
-        if self.is_running():
-            console.print("[yellow]⚠️  Server is already running[/yellow]")
-            return False
-
-        if not self.process_manager.acquire_lock():
-            console.print("[red]❌ Another server instance is running[/red]")
-            return False
-
+        """Internal server start logic"""
         jar_path = self.server_dir / self.config.get("jar_name")
         if not jar_path.exists():
             console.print(f"[red]❌ JAR file not found: {jar_path}[/red]")
             return False
 
-        try:
-            # Build basic Java command
-            java_cmd = [
-                "java",
-                f"-Xms{self.config.get('memory_min')}",
-                f"-Xmx{self.config.get('memory_max')}",
-                "-jar", self.config.get("jar_name"), "nogui"
-            ]
+        # Ensure server directory exists
+        self.server_dir.mkdir(parents=True, exist_ok=True)
 
-            # Start process
-            self.process = subprocess.Popen(
-                java_cmd,
-                cwd=self.server_dir,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.PIPE,
-                text=True
-            )
+        # Removed: _setup_eula()
+        # Removed: _setup_server_properties()
 
-            self.process_manager.save_pid(self.process.pid)
-            console.print("[green]✅ Server process launched![/green]")
-            return True
+        # Build Java command
+        java_cmd = self._build_java_command()
 
-        except Exception as e:
-            self.process_manager.release_lock()
-            console.print(f"[red]❌ Failed to start server: {e}[/red]")
-            return False
+        with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=console
+        ) as progress:
+            task = progress.add_task("Starting server...", total=None)
+
+            try:
+                # Start server process
+                self.process = subprocess.Popen(
+                    java_cmd,
+                    cwd=self.server_dir,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    stdin=subprocess.PIPE,
+                    text=True,
+                    bufsize=1,
+                    universal_newlines=True
+                )
+
+                # Save PID
+                self.process_manager.save_pid(self.process.pid)
+
+                # Removed: _wait_for_startup()
+                # Removed: psutil and stats setup coupled with _wait_for_startup
+
+                console.print("[green]✅ Server process launched![/green]")
+                console.print(f"[dim]PID: {self.process.pid}[/dim]")
+                return True
+
+            except Exception as e:
+                self._cleanup_failed_start()
+                raise e
+
+    # Removed: _setup_eula method entirely
+    # Removed: _setup_server_properties method entirely
+    # Removed: _update_properties_file method entirely
+    # Removed: _create_properties_file method entirely
 
     def _build_java_command(self) -> List[str]:
         """Build the Java command for starting the server"""
@@ -116,24 +129,7 @@ class MinecraftServer:
 
         return cmd
 
-    def _wait_for_startup(self, timeout: int = 120) -> bool:
-        """Wait for server to start up properly"""
-        start_time = time.time()
-
-        while time.time() - start_time < timeout:
-            if not self.process or self.process.poll() is not None:
-                console.print("[red]❌ Server process terminated during startup[/red]")
-                return False
-
-            # Check if server port is open
-            if self._is_port_open(self.config.get("server_port")):
-                time.sleep(3)  # Give it a moment to fully initialize
-                return True
-
-            time.sleep(2)
-
-        console.print(f"[red]❌ Server startup timeout ({timeout}s)[/red]")
-        return False
+    # Removed: _wait_for_startup method entirely
 
     def _cleanup_failed_start(self):
         """Cleanup after failed start"""
@@ -229,6 +225,7 @@ class MinecraftServer:
 
         return self.process_manager.is_process_running(pid)
 
+    # Kept _is_port_open but removed calls to it from status and startup
     def _is_port_open(self, port: int) -> bool:
         """Check if port is open"""
         try:
@@ -262,7 +259,7 @@ class MinecraftServer:
         """Get comprehensive server status"""
         base_status = {
             "running": self.is_running(),
-            "port_open": self._is_port_open(self.config.get("server_port")),
+            # Removed: "port_open": self._is_port_open(self.config.get("server_port")),
             "config": self.config.get_summary()
         }
 
