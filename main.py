@@ -1,5 +1,6 @@
 import argparse
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from backup import BackupManager
@@ -59,7 +60,7 @@ Examples:
     backup_parser = subparsers.add_parser("backup", help="Create world backup")
     backup_parser.add_argument("--name", "-n", help="Custom backup name")
 
-    subparsers.add_parser("list-backups", help="List all backups")
+    list_parser = subparsers.add_parser("list-backups", help="List all backups")
 
     restore_parser = subparsers.add_parser("restore", help="Restore from backup")
     restore_parser.add_argument("backup", nargs="?", help="Backup file name to restore")
@@ -121,7 +122,8 @@ Examples:
                 if backups:
                     console.print("\n📁 Recent Backups:")
                     for backup in backups[:3]:
-                        console.print(f"  • {backup['name']} ({backup['size_formatted']}) - {backup['created'].strftime('%Y-%m-%d %H:%M:%S')}")
+                        console.print(
+                            f"  • {backup['name']} ({backup['size_formatted']}) - {backup['created'].strftime('%Y-%m-%d %H:%M:%S')}")
             else:
                 # Simple status
                 if server_status['running']:
@@ -140,7 +142,8 @@ Examples:
             else:
                 console.print("\n📁 Available Backups:")
                 for backup in backups:
-                    console.print(f"  • {backup['name']} ({backup['size_formatted']}) - {backup['created'].strftime('%Y-%m-%d %H:%M:%S')}")
+                    console.print(
+                        f"  • {backup['name']} ({backup['size_formatted']}) - {backup['created'].strftime('%Y-%m-%d %H:%M:%S')}")
 
         elif args.command == "restore":
             if hasattr(args, 'backup') and args.backup:
@@ -154,19 +157,22 @@ Examples:
 
                 console.print("\nAvailable backups:")
                 for i, backup in enumerate(backups, 1):
-                    console.print(f"  {i}. {backup['name']} ({backup['size_formatted']}) - {backup['created'].strftime('%Y-%m-%d %H:%M:%S')}")
+                    console.print(
+                        f"  {i}. {backup['name']} ({backup['size_formatted']}) - {backup['created'].strftime('%Y-%m-%d %H:%M:%S')}")
 
                 try:
-                    choice = int(input("\nSelect backup number: ")) - 1
-                    backup_name = backups[choice]['name']
-                except (ValueError, IndexError):
-                    print_error("Invalid selection")
+                    from rich.prompt import IntPrompt
+                    choice = IntPrompt.ask("\nSelect backup number",
+                                           choices=[str(i) for i in range(1, len(backups) + 1)])
+                    backup_name = backups[choice - 1]['name']
+                except (ValueError, IndexError, KeyboardInterrupt):
+                    print_error("Invalid selection or cancelled")
                     return
 
             if server.is_running():
                 print_warning("Server is running. It should be stopped before restoring.")
-                response = input("Stop server and continue? (y/N): ")
-                if response.lower() != 'y':
+                from rich.prompt import Confirm
+                if not Confirm.ask("Stop server and continue?", default=False):
                     return
                 server.stop()
 
@@ -189,6 +195,9 @@ Examples:
                     print_success("Watchdog is running")
                     if status['restart_count'] > 0:
                         print_info(f"Restart count: {status['restart_count']}")
+                        if status['last_restart'] > 0:
+                            last_restart_time = datetime.fromtimestamp(status['last_restart'])
+                            print_info(f"Last restart: {last_restart_time.strftime('%Y-%m-%d %H:%M:%S')}")
                 else:
                     print_error("Watchdog is not running")
 
@@ -201,6 +210,7 @@ Examples:
             import traceback
             traceback.print_exc()
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

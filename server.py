@@ -1,3 +1,4 @@
+import shlex
 import socket
 import subprocess
 import time
@@ -40,10 +41,15 @@ class MinecraftServer:
             eula_path.write_text("eula=true\n")
 
         print_info(f"Starting server with {self.memory} memory...")
-        cmd = f"screen -dmS {self.screen_name} bash -c 'cd {self.server_dir} && java -Xmx{self.memory} -jar {self.jar_name} nogui'"
+
+        # Use safer subprocess approach instead of shell=True
+        cmd = [
+            "screen", "-dmS", self.screen_name, "bash", "-c",
+            f"cd {shlex.quote(str(self.server_dir))} && java -Xmx{self.memory} -jar {shlex.quote(self.jar_name)} nogui"
+        ]
 
         try:
-            subprocess.run(cmd, shell=True, check=True)
+            subprocess.run(cmd, check=True)
             # Wait a moment for server to start
             time.sleep(3)
             if self.is_running():
@@ -80,15 +86,20 @@ class MinecraftServer:
         """Force stop the server if graceful shutdown fails"""
         try:
             # Kill the screen session
-            subprocess.run(f"screen -S {self.screen_name} -X quit", shell=True)
+            subprocess.run(["screen", "-S", self.screen_name, "-X", "quit"], check=False)
 
             # Find and kill Java processes
             for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
                 try:
                     if (proc.info['name'] == 'java' and
-                            any(self.jar_name in cmd for cmd in proc.info['cmdline'] or [])):
+                            proc.info['cmdline'] and
+                            any(self.jar_name in str(cmd) for cmd in proc.info['cmdline'])):
+                        print_info(f"Terminating Java process {proc.pid}")
                         proc.terminate()
-                        proc.wait(timeout=5)
+                        try:
+                            proc.wait(timeout=5)
+                        except psutil.TimeoutExpired:
+                            proc.kill()
                 except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.TimeoutExpired):
                     pass
 
@@ -149,12 +160,13 @@ class MinecraftServer:
                 for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'memory_info', 'cpu_percent', 'create_time']):
                     try:
                         if (proc.info['name'] == 'java' and
-                                any(self.jar_name in cmd for cmd in proc.info['cmdline'] or [])):
+                                proc.info['cmdline'] and
+                                any(self.jar_name in str(cmd) for cmd in proc.info['cmdline'])):
                             status['memory_usage'] = proc.info['memory_info'].rss / 1024 / 1024  # MB
                             status['cpu_usage'] = proc.cpu_percent()
                             status['uptime'] = time.time() - proc.info['create_time']
                             break
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, AttributeError):
                         continue
             except Exception:
                 pass
@@ -173,8 +185,10 @@ class MinecraftServer:
             return False
 
         try:
-            cmd = f"screen -S {self.screen_name} -X stuff '{command}\\n'"
-            subprocess.run(cmd, shell=True, check=True)
+            # Escape the command properly
+            escaped_command = command.replace("'", "'\"'\"'")  # Escape single quotes
+            cmd = ["screen", "-S", self.screen_name, "-X", "stuff", f"{escaped_command}\n"]
+            subprocess.run(cmd, check=True)
             print_success(f"Command sent: {command}")
             return True
         except subprocess.CalledProcessError as e:
